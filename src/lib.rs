@@ -178,6 +178,19 @@ where
         self.change_config(Register::CTRL_REG4, mask, bits)
     }
 
+    /// Get the current FIFO queue status
+    ///
+    /// See `FifoStatus` for more information
+    pub fn fifo_status(&mut self) -> Result<FifoStatus, E> {
+        let bits = self.read_register(Register::FIFO_SRC_REG)?;
+        Ok(FifoStatus {
+            above_watermark: bits & (1 << 7) != 0,
+            overrun:         bits & (1 << 6) != 0,
+            empty:           bits & (1 << 5) != 0,
+            num_elements:    bits & 0x1F,
+        })
+    }
+
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
         self.cs.set_low();
 
@@ -382,4 +395,19 @@ pub struct Status {
     pub y_new: bool,
     /// New data is available on X-axis
     pub x_new: bool,
+}
+
+/// Status of device FIFO
+#[derive(Debug, Clone, Copy)]
+pub struct FifoStatus {
+    /// Does the FIFO queue have more elements than the watermark?
+    pub above_watermark: bool,
+    /// Is the queue completely filled?
+    pub overrun: bool,
+    /// Is the queue empty?
+    pub empty: bool,
+    /// How many elements are stored in the queue
+    ///
+    /// Maximum queue size is 32
+    pub num_elements: u8,
 }
