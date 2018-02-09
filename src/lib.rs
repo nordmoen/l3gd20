@@ -185,12 +185,15 @@ where
     /// configuration which doesn't say anything about the queue being enabled.
     pub fn fifo_config(&mut self) -> Result<FifoConfig, E> {
         let bits = self.read_register(Register::FIFO_CTRL_REG)?;
-        let mode = match bits >> 5 & 0x03 {
+        let mode = match bits >> 5 & 0x07 {
             x if x == FifoMode::Bypass         as u8 => FifoMode::Bypass,
             x if x == FifoMode::Fifo           as u8 => FifoMode::Fifo,
             x if x == FifoMode::Stream         as u8 => FifoMode::Stream,
             x if x == FifoMode::StreamToFifo   as u8 => FifoMode::StreamToFifo,
             x if x == FifoMode::BypassToStream as u8 => FifoMode::BypassToStream,
+            // TODO: Change panic to proper Error
+            // Since not all combinations are used for `FifoMode` we _could_
+            // end up in the default arm (which should not panic?)
             _ => panic!("Unknown 'FifoMode'"),
         };
         let lvl = bits & 0x1F;
@@ -277,6 +280,64 @@ where
         };
         let mask = 0b0000_1111;
         self.change_config(Register::CTRL_REG3, mask, bits)
+    }
+
+    /// Check if FIFO queue is enabled
+    pub fn fifo_enabled(&mut self) -> Result<bool, E> {
+        let bits = self.read_register(Register::CTRL_REG5)?;
+        Ok(bits & (1 << 6) != 0)
+    }
+
+    /// Enable or disable FIFO
+    ///
+    /// See functions like `fifo_status`, `fifo_config`, `set_fifo_mode` and
+    /// `set_fifo_watermark` for configuration of FIFO queue.
+    pub fn enable_fifo(&mut self, enable: bool) -> Result<&mut Self, E> {
+        let bits = if enable { 1 << 6 } else { 0x00 };
+        let mask = 0b0100_0000;
+        self.change_config(Register::CTRL_REG5, mask, bits)
+    }
+
+    /// Get current output selection configuration
+    ///
+    /// See `OutSel` for more information.
+    pub fn out_sel(&mut self) -> Result<OutSel, E> {
+        let bits = self.read_register(Register::CTRL_REG5)?;
+        // Is the high pass filter enabled?
+        let high_en = bits & (1 << 4) != 0;
+        let mode = match bits & 0x03 {
+            x if x == OutSel::LowPass as u8  => OutSel::LowPass,
+            x if x == OutSel::HighPass as u8 => OutSel::HighPass,
+            // Full configuration is used, but return depends on status of the
+            // high-pass filter
+            x if x == OutSel::Full as u8 || x == OutSel::DoubleLow => {
+                if high_en {
+                    OutSel::Full
+                } else {
+                    OutSel::DoubleLow
+                }
+            }
+            _ => unreachable!(),
+        };
+        Ok(mode)
+    }
+
+    /// Set output selection configuration
+    ///
+    /// See `OutSel` for more information.
+    ///
+    /// # Note
+    /// If `OutSel::Full` configuration is chosen then the high-pass filter
+    /// will be automatically enabled.
+    pub fn set_out_sel(&mut self, selection: OutSel) -> Result<&mut Self, E> {
+        let mut bits = selection as u8;
+        if selection == OutSel::Full {
+            // Automatically enable high-pass filter if full output
+            // is selected
+            bits |= 1 << 4;
+        }
+        let mask = 0b0001_0011;
+        self.change_config(Register::CTRL_REG5, mask, bits)
     }
 
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
@@ -444,7 +505,6 @@ pub enum FifoMode {
     BypassToStream = 0x04,
 }
 
-
 /// Interrupt line 2 configuration
 #[derive(Debug, Clone, Copy)]
 pub enum Int2Config {
@@ -469,6 +529,23 @@ pub enum Int2Config {
     },
     /// There is no active configuration for `INT2`
     NotUsed,
+}
+
+/// Output selection
+///
+/// Output selection decides how data is filtered before it is placed in
+/// output registers (or FIFO queue). Refer to Figure 18 of data sheet.
+#[derive(Debug, Clone, Copy)]
+pub enum OutSel {
+    /// Data is only passed through low-pass filter
+    LowPass   = 0x00,
+    /// Data is first passed through low-pass filter then a high-pass filter
+    HighPass  = 0x01,
+    /// Data is passed through two low-pass filters
+    DoubleLow = 0x02,
+    /// Data is passed through low-pass filter, then high-pass filter then
+    /// another low-pass filter
+    Full      = 0x03,
 }
 
 const READ: u8 = 1 << 7;
