@@ -191,6 +191,13 @@ where
         })
     }
 
+    /// Enable or disable interrupt on `DRDY`/`INT2`
+    pub fn drdy_interrupt(&mut self, enable: bool) -> Result<&mut Self, E> {
+        let bits = if enable { 1 << 3 } else { 0 };
+        let mask = 0b0000_1000;
+        self.change_config(Register::CTRL_REG3, mask, bits)
+    }
+
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
         self.cs.set_low();
 
