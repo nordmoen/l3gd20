@@ -234,10 +234,48 @@ where
         })
     }
 
-    /// Enable or disable interrupt on `DRDY`/`INT2`
-    pub fn drdy_interrupt(&mut self, enable: bool) -> Result<&mut Self, E> {
-        let bits = if enable { 1 << 3 } else { 0 };
-        let mask = 0b0000_1000;
+    /// Get the current configuration for `INT2`
+    ///
+    /// See `Int2Config` for more information.
+    pub fn int2_config(&mut self) -> Result<Int2Config, E> {
+        let bits = self.read_register(Register::CTRL_REG3)?;
+        if bits & 0x0F == 0  {
+            // If none of the lower 4 bits are active then we treat that as
+            // not in use
+            Ok(Int2Config::NotUsed)
+        } else if bits & (1 << 3) != 0 {
+            Ok(Int2Config::DataReady)
+        } else {
+            Ok(Int2Config::Fifo{
+                watermark: bits & (1 << 2) != 0,
+                overrun:   bits & (1 << 1) != 0,
+                empty:     bits & (1 << 0) != 0,
+            })
+        }
+    }
+
+    /// Set the configuration for `INT2`
+    ///
+    /// See `Int2Config` for more information.
+    pub fn set_int2_config(&mut self, cfg: Int2Config) -> Result<&mut Self, E> {
+        let bits = match cfg {
+            Int2Config::NotUsed => 0x00,
+            Int2Config::DataReady => 1 << 3,
+            Int2Config::Fifo {watermark, overrun, empty} => {
+                let mut bits = 0x00;
+                if watermark {
+                    bits |= 1 << 2;
+                }
+                if overrun {
+                    bits |= 1 << 1;
+                }
+                if empty {
+                    bits |= 1 << 0;
+                }
+                bits
+            },
+        };
+        let mask = 0b0000_1111;
         self.change_config(Register::CTRL_REG3, mask, bits)
     }
 
@@ -386,7 +424,7 @@ pub enum FifoMode {
     Bypass         = 0x00,
     /// Place all measurements into FIFO queue
     ///
-    /// Once the queue is full the no further measurements are added and
+    /// Once the queue is full no further measurements are added and
     /// the queue has to be reset by changing the mode back to `Bypass`.
     Fifo           = 0x01,
     /// Place, and replace, all measurements into FIFO queue
@@ -404,6 +442,33 @@ pub enum FifoMode {
     /// The queue will first be operated the same way as `Bypass` mode, when
     /// an interrupt is triggered on `INT1_CFG` the mode changes to `Stream`.
     BypassToStream = 0x04,
+}
+
+
+/// Interrupt line 2 configuration
+#[derive(Debug, Clone, Copy)]
+pub enum Int2Config {
+    /// Interrupt on Data Ready
+    ///
+    /// In this mode `INT2` is used to notify when data is ready. This is most
+    /// useful in `FifoMode::Bypass` to simply be notified every time new
+    /// data is available to be read.
+    DataReady,
+    /// Interrupt on FIFO configuration
+    ///
+    /// In this mode `INT2` is used to notify about FIFO events. The interrupt
+    /// can be used not notify when FIFO queue is above `watermark`, if the
+    /// queue has been `overrun` and/or if the queue is `empty`.
+    Fifo {
+        /// Create interrupt when FIFO watermark is exceed
+        watermark: bool,
+        /// Create interrupt when FIFO is overrun
+        overrun: bool,
+        /// Create interrupt when FIFO is empty
+        empty: bool,
+    },
+    /// There is no active configuration for `INT2`
+    NotUsed,
 }
 
 const READ: u8 = 1 << 7;
