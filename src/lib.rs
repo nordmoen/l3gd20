@@ -178,6 +178,49 @@ where
         self.change_config(Register::CTRL_REG4, mask, bits)
     }
 
+    /// Get the current FIFO configuration
+    ///
+    /// # Note
+    /// The queue may not be enabled, this method only returns the current
+    /// configuration which doesn't say anything about the queue being enabled.
+    pub fn fifo_config(&mut self) -> Result<FifoConfig, E> {
+        let bits = self.read_register(Register::FIFO_CTRL_REG)?;
+        let mode = match bits >> 5 & 0x03 {
+            x if x == FifoMode::Bypass         as u8 => FifoMode::Bypass,
+            x if x == FifoMode::Fifo           as u8 => FifoMode::Fifo,
+            x if x == FifoMode::Stream         as u8 => FifoMode::Stream,
+            x if x == FifoMode::StreamToFifo   as u8 => FifoMode::StreamToFifo,
+            x if x == FifoMode::BypassToStream as u8 => FifoMode::BypassToStream,
+            _ => panic!("Unknown 'FifoMode'"),
+        };
+        let lvl = bits & 0x1F;
+        Ok(FifoConfig {
+            mode: mode,
+            watermark: lvl,
+        })
+    }
+
+    /// Set the FIFO mode
+    ///
+    /// See `FifoMode` for values and meaning.
+    pub fn set_fifo_mode(&mut self, mode: FifoMode) -> Result<&mut Self, E> {
+        let bits = (mode as u8) << 5;
+        let mask = 0b1110_0000;
+        self.change_config(Register::FIFO_CTRL_REG, mask, bits)
+    }
+
+    /// Set the watermark threshold for the FIFO queue
+    ///
+    /// The threshold is used to create interrupts with FIFO status.
+    ///
+    /// # Note
+    /// Only the bottom 5 bits are used so values above `32` are masked out.
+    pub fn set_fifo_watermark(&mut self, threshold: u8) -> Result<&mut Self, E> {
+        let bits = threshold & 0x1F;
+        let mask = 0b0001_1111;
+        self.change_config(Register::FIFO_CTRL_REG, mask, bits)
+    }
+
     /// Get the current FIFO queue status
     ///
     /// See `FifoStatus` for more information
@@ -333,6 +376,36 @@ pub enum Bandwidth {
     Maximum = 0x03,
 }
 
+/// Configuration mode for device FIFO queue
+#[derive(Debug, Clone, Copy)]
+pub enum FifoMode {
+    /// Bypass mode, FIFO queue not in use
+    ///
+    /// Only the first register is written to and when new data is available
+    /// it overwrites the old data.
+    Bypass         = 0x00,
+    /// Place all measurements into FIFO queue
+    ///
+    /// Once the queue is full the no further measurements are added and
+    /// the queue has to be reset by changing the mode back to `Bypass`.
+    Fifo           = 0x01,
+    /// Place, and replace, all measurements into FIFO queue
+    ///
+    /// Once the queue is full older data will be evacuated in favour of
+    /// new measurements.
+    Stream         = 0x02,
+    /// Set mode to `Stream` until trigger event, then `Fifo` mode
+    ///
+    /// The queue will first be operated the same way as `Stream` mode, when
+    /// an interrupt is triggered on `INT1_CFG` the mode changes to `Fifo`.
+    StreamToFifo   = 0x03,
+    /// Set mode to `Bypass` until trigger event, then `Stream` mode
+    ///
+    /// The queue will first be operated the same way as `Bypass` mode, when
+    /// an interrupt is triggered on `INT1_CFG` the mode changes to `Stream`.
+    BypassToStream = 0x04,
+}
+
 const READ: u8 = 1 << 7;
 const WRITE: u8 = 0 << 7;
 const MULTI: u8 = 1 << 6;
@@ -417,4 +490,17 @@ pub struct FifoStatus {
     ///
     /// Maximum queue size is 32
     pub num_elements: u8,
+}
+
+/// FIFO configuration for device
+#[derive(Debug, Clone, Copy)]
+pub struct FifoConfig {
+    /// Operating mode of FIFO queue
+    pub mode: FifoMode,
+    /// Watermark threshold level
+    ///
+    /// # Note
+    /// Only the bottom 5 bits will be considered, meaning a maximum value
+    /// of `32`.
+    pub watermark: u8,
 }
