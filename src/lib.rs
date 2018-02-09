@@ -306,11 +306,11 @@ where
         // Is the high pass filter enabled?
         let high_en = bits & (1 << 4) != 0;
         let mode = match bits & 0x03 {
-            x if x == OutSel::LowPass as u8  => OutSel::LowPass,
+            x if x == OutSel::LowPass  as u8  => OutSel::LowPass,
             x if x == OutSel::HighPass as u8 => OutSel::HighPass,
             // Full configuration is used, but return depends on status of the
             // high-pass filter
-            x if x == OutSel::Full as u8 || x == OutSel::DoubleLow => {
+            x if x == OutSel::Full as u8 || x == OutSel::DoubleLow as u8 => {
                 if high_en {
                     OutSel::Full
                 } else {
@@ -331,13 +331,55 @@ where
     /// will be automatically enabled.
     pub fn set_out_sel(&mut self, selection: OutSel) -> Result<&mut Self, E> {
         let mut bits = selection as u8;
-        if selection == OutSel::Full {
-            // Automatically enable high-pass filter if full output
-            // is selected
-            bits |= 1 << 4;
+        match selection {
+            OutSel::Full => bits |= 1 << 4,
+            _ =>            bits &= !(1 << 4),
         }
         let mask = 0b0001_0011;
         self.change_config(Register::CTRL_REG5, mask, bits)
+    }
+
+    /// Get the current high-pass configuration
+    ///
+    /// See `HighPassConfig`, `HighPassMode` and `HighPassCutOff` for further
+    /// information.
+    pub fn highpass_config(&mut self) -> Result<HighPassConfig, E> {
+        let bits = self.read_register(Register::CTRL_REG2)?;
+        let mode = match (bits >> 4) & 0x03 {
+            x if x == HighPassMode::NormalReset as u8 => HighPassMode::NormalReset,
+            x if x == HighPassMode::Reference   as u8 => HighPassMode::Reference,
+            x if x == HighPassMode::Normal      as u8 => HighPassMode::Normal,
+            x if x == HighPassMode::AutoReset   as u8 => HighPassMode::AutoReset,
+            _ => unreachable!(),
+        };
+        let cut_off = match bits & 0x0F {
+            x if x == HighPassCutOff::CutOff0 as u8 => HighPassCutOff::CutOff0,
+            x if x == HighPassCutOff::CutOff1 as u8 => HighPassCutOff::CutOff1,
+            x if x == HighPassCutOff::CutOff2 as u8 => HighPassCutOff::CutOff2,
+            x if x == HighPassCutOff::CutOff3 as u8 => HighPassCutOff::CutOff3,
+            x if x == HighPassCutOff::CutOff4 as u8 => HighPassCutOff::CutOff4,
+            x if x == HighPassCutOff::CutOff5 as u8 => HighPassCutOff::CutOff5,
+            x if x == HighPassCutOff::CutOff6 as u8 => HighPassCutOff::CutOff6,
+            x if x == HighPassCutOff::CutOff7 as u8 => HighPassCutOff::CutOff7,
+            x if x == HighPassCutOff::CutOff8 as u8 => HighPassCutOff::CutOff8,
+            x if x == HighPassCutOff::CutOff9 as u8 => HighPassCutOff::CutOff9,
+            // TODO: Replace panic with proper Error!
+            _ => panic!("Unknown 'HighPassCutOff' value"),
+        };
+        Ok(HighPassConfig {
+            mode: mode,
+            cut_off: cut_off,
+        })
+    }
+
+    /// Set the high-pass configuration
+    ///
+    /// See `HighPassConfig`, `HighPassMode` and `HighPassCutOff` for further
+    /// information.
+    pub fn set_highpass_config(&mut self, cfg: HighPassConfig) -> Result<&mut Self, E> {
+        let bits = ((cfg.mode as u8) << 4) | (cfg.cut_off as u8);
+        let mask = 0b0011_1111;
+        self.change_config(Register::CTRL_REG2, mask, bits)
     }
 
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
@@ -462,7 +504,7 @@ pub enum Scale {
 ///
 /// The bandwidth of the sensor is equal to the cut-off for the low-pass
 /// filter. The cut-off depends on the `ODR` of the sensor, for specific
-/// information consult the data sheet.
+/// information consult the data sheet (table 21).
 #[derive(Debug, Clone, Copy)]
 pub enum Bandwidth {
     /// Lowest possible cut-off for any `ODR` configuration
@@ -546,6 +588,41 @@ pub enum OutSel {
     /// Data is passed through low-pass filter, then high-pass filter then
     /// another low-pass filter
     Full      = 0x03,
+}
+
+/// High-pass filter mode
+///
+/// See table 25 in data sheet for further information.
+#[derive(Debug, Clone, Copy)]
+pub enum HighPassMode {
+    // TODO: Is there any better way to explain the modes below?
+    /// Normal mode (reset reading `HP_RESET_FILTER`)
+    NormalReset = 0x00,
+    /// Reference signal for filtering
+    Reference   = 0x01,
+    /// Normal mode
+    Normal      = 0x02,
+    /// Auto reset on interrupt event
+    AutoReset   = 0x03,
+}
+
+/// High-pass filter cut off frequency
+///
+/// The cut off is dependent on `ODR` so refer to table 26 of the data sheet
+/// for actual numbers.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy)]
+pub enum HighPassCutOff {
+    CutOff0 = 0x00,
+    CutOff1 = 0x01,
+    CutOff2 = 0x02,
+    CutOff3 = 0x03,
+    CutOff4 = 0x04,
+    CutOff5 = 0x05,
+    CutOff6 = 0x06,
+    CutOff7 = 0x07,
+    CutOff8 = 0x08,
+    CutOff9 = 0x09,
 }
 
 const READ: u8 = 1 << 7;
@@ -645,4 +722,13 @@ pub struct FifoConfig {
     /// Only the bottom 5 bits will be considered, meaning a maximum value
     /// of `32`.
     pub watermark: u8,
+}
+
+/// Configuration of the High-pass filter
+#[derive(Debug, Clone, Copy)]
+pub struct HighPassConfig {
+    /// Mode selection for High-pass filter
+    pub mode: HighPassMode,
+    /// Cut off frequency selection for High-pass filter
+    pub cut_off: HighPassCutOff,
 }
