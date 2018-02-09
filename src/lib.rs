@@ -372,13 +372,21 @@ where
         })
     }
 
-    /// Set the high-pass configuration
+    /// Set the high-pass mode
     ///
-    /// See `HighPassConfig`, `HighPassMode` and `HighPassCutOff` for further
-    /// information.
-    pub fn set_highpass_config(&mut self, cfg: HighPassConfig) -> Result<&mut Self, E> {
-        let bits = ((cfg.mode as u8) << 4) | (cfg.cut_off as u8);
-        let mask = 0b0011_1111;
+    /// See `HighPassMode` for more information.
+    pub fn set_highpass_mode(&mut self, mode: HighPassMode) -> Result<&mut Self, E> {
+        let bits = (mode as u8) << 4;
+        let mask = 0b0011_0000;
+        self.change_config(Register::CTRL_REG2, mask, bits)
+    }
+
+    /// Set cut off frequency of the high-pass filter
+    ///
+    /// See `HighPassCutOff` for more information.
+    pub fn set_highpass_cutoff(&mut self, cut: HighPassCutOff) -> Result<&mut Self, E> {
+        let bits = cut as u8;
+        let mask = 0b0000_1111;
         self.change_config(Register::CTRL_REG2, mask, bits)
     }
 
